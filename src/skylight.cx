@@ -1,0 +1,508 @@
+package main
+
+import "app"
+import "fps"
+import "gam"
+import "gfx"
+import "gui"
+import "mat"
+import "snd"
+import "phx"
+
+// TODO : can't navigate with keyboard at startup
+// TODO : dialog disapear if exit button is pushed with keyboard
+
+// Globals ...
+var gameScreen gui.ScreenId
+var exitScreen gui.ScreenId
+
+var skyminerModel gfx.ModelId = gfx.ModelInvalid()
+var skyminerScale f32 = 0.005
+
+var groundMesh gfx.MeshId = gfx.InvalidMesh()
+var texture gfx.TextureId = gfx.InvalidTexture()
+
+var skyMesh gfx.MeshId = gfx.InvalidMesh()
+var skyDiffuse gfx.TextureId = gfx.InvalidTexture()
+var skySpecular gfx.TextureId = gfx.InvalidTexture()
+var brdf gfx.TextureId = gfx.InvalidTexture()
+
+var world [] f32 = mat.MatrixAlloc()
+var identity [] f32 = mat.MatrixAlloc()
+
+var camera gam.CameraId
+
+var worldPosY f32 = -10.0
+
+var worldSizeX f32 = 2000.0
+var worldSizeZ f32 = 2000.0
+
+var worldCellX i32 = 64
+var worldCellZ i32 = 64
+
+var phxPlayer i32
+var phxGround0 i32
+var phxGround1 i32
+
+var groundScale f32 = 20.0
+var groundRight f32 = worldSizeX / groundScale
+var groundBack f32 = worldSizeZ / groundScale
+var groundWidth i32 = 16
+var groundHeight i32 = 16
+
+var voiceId snd.VoiceId
+
+var TAG_MINER i32 = 1
+var TAG_GROUND i32 = 2
+var TAG_PLAYER i32 = 3
+
+var CAMERA_FREE i32 = 0
+var CAMERA_TPS i32 = 1
+var CAMERA_FPS i32 = 2
+var CAMERA_COUNT i32 = 3
+var currentCamera i32 = CAMERA_FPS
+
+//-----------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
+func gameOnEvent(controlIndex i32, controlAction i32) {
+	var key i32 = gui.CurrentEvent.keyboard.key
+	var action i32 = gui.CurrentEvent.keyboard.action
+	var mods i32 = gui.CurrentEvent.keyboard.mods
+	if mods == app.MOD_CTRL && action == app.KEY_PRESS {
+		if key == app.KEYCODE_LEFT {
+		} else if key == app.KEYCODE_RIGHT {
+		} else if key == app.KEYCODE_UP {
+		} else if key == app.KEYCODE_DOWN {
+		}
+	} else if mods == app.MOD_SHIFT && action == app.KEY_PRESS {
+		if key == app.KEYCODE_LEFT {
+			currentCamera = currentCamera - 1
+			if currentCamera < 0 {
+				currentCamera = CAMERA_COUNT - 1
+			}
+		} else if key == app.KEYCODE_RIGHT {
+			currentCamera = currentCamera + 1
+			if currentCamera >= CAMERA_COUNT {
+				currentCamera = 0
+			}
+		} else if key == app.KEYCODE_UP {
+		} else if key == app.KEYCODE_DOWN {
+		}
+	} else if action == app.KEY_PRESS {
+		if key == app.KEYCODE_SPACE {
+			var position mat.v3 = gam.CameraGetPosition(camera)
+			position = mat.v3_add(position, mat.v3_(0.0, 0.5, 0.0))
+
+			var objType i32 = i32.rand(1, phx.TYPE_CUSTOM + 1)
+			var at mat.v3 = mat.v3_mulf(gam.CameraGetAt(camera), -1.0)
+			var axis mat.v3 = mat.v3_normalize(mat.v3_rand())
+			var state i32 = phx.STATE_TRANSLATE | phx.STATE_ROTATE
+
+			var mass f32
+			var right mat.v3
+			var top mat.v3
+			var back mat.v3
+			var objTag i32
+
+			objType = phx.TYPE_CUSTOM
+			if objType == phx.TYPE_CUSTOM {
+				//state = state | phx.STATE_DEBUG | phx.STATE_DEBUG_COLOR | phx.STATE_DEBUG_WIRE
+				objType = phx.TYPE_BOX
+				objTag = TAG_MINER
+				mass = 20.0 + f32.abs(f32.rand()) * 10.0
+				var min mat.v3 = gfx.ModelGetMin(skyminerModel)
+				var max mat.v3 = gfx.ModelGetMax(skyminerModel)
+				var radius f32 = skyminerScale * 0.51
+				right = mat.v3_(radius * (max.x - min.x), 0.0, 0.0)
+				top = mat.v3_(0.0, radius * (max.y - min.y), 0.0)
+				back = mat.v3_(0.0, 0.0, radius * (max.z - min.z))
+			}/* else {
+				state = state | phx.STATE_DEBUG | phx.STATE_DEBUG_COLOR
+				right = mat.v3_(0.5 + f32.rand() * 0.5, 0.0, 0.0)
+				top = mat.v3_(0.0, 0.5 + f32.rand() * 0.5, 0.0)
+				back = mat.v3_(0.0, 0.0, 0.5 + f32.rand() * 0.5)
+				mass = 10.0 + f32.abs(f32.rand()) * 100.0
+			}*/
+
+			var force f32 = 200000.0
+			var acceleration mat.v3 = mat.v3_mulf(at, force / mass)
+
+			var miner i32 = phx.AddObject(objType, objTag, state, position, mat.v3_(0.0, 0.0, 0.0), acceleration,
+				right, top, back, mass,
+				mat.v4_(axis.x, axis.y, axis.z, f32.rand()))
+		}
+	}
+
+	var mouseAction i32 = gui.CurrentEvent.mouse.action
+	var mouseButton i32 = gui.CurrentEvent.mouse.button
+
+	if mouseAction == app.MOUSE_PRESS && mouseButton == app.BUTTON_LEFT {
+	}
+
+	if currentCamera == CAMERA_FREE {
+		//printf("FREE\n")
+		gam.FreeCameraProcess(camera, &gui.CurrentEvent)
+	} else if currentCamera == CAMERA_FPS {
+		//printf("FIRST\n")
+		gam.FpsCameraProcess(camera, &gui.CurrentEvent)
+	} else if currentCamera == CAMERA_TPS {
+		//printf("THIRD\n")
+		gam.TpsCameraProcess(camera, &gui.CurrentEvent)
+	}
+}
+
+//-----------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
+var firstUpdate bool = false
+func gameOnUpdate(controlIndex i32, controlAction i32) {
+	// >> HACK : start cx profiling
+	if firstUpdate == false {
+		firstUpdate = true
+		debugI32(0)
+	}
+	// << HACK : start cx profiling
+
+	phx.Update(fps.DeltaNano())
+
+	var dts f64 = fps.DeltaSecond()
+	var playerPosition mat.v3 = phx.GetObjectPosition(phxPlayer)
+
+	//printf("--------------------------------------------------------------------- CAMERA_UPDATE\n")
+	if currentCamera == CAMERA_FREE {
+		gam.FreeCameraUpdate(camera, dts)
+	} else if currentCamera == CAMERA_FPS {
+		gam.FpsCameraUpdate(camera, dts, playerPosition)
+	} else if currentCamera == CAMERA_TPS {
+		gam.TpsCameraUpdate(camera, dts, playerPosition, 50.0)
+	}
+
+	var dt f32 = f64.f32(dts)
+
+	var i i32
+	for i = 0; i < phx.GetObjectCount(); i++ {
+		if phx.GetObjectTag(i) == TAG_MINER {
+			var position mat.v3 = phx.GetObjectPosition(i)
+			if position.y < worldPosY * 2.0 {
+				phx.RemoveObject(i)
+				i = i - 1
+			}
+		}
+	}
+	gfx.ModelUpdate(skyminerModel, dt, true)
+}
+
+//-----------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
+func gameOnRender(controlIndex i32, controlAction i32) {
+	var view []f32 = gam.CameraGetView(camera)
+	var projection []f32 = gam.CameraGetProjection(camera)
+	var cameraPosition mat.v3 = gam.CameraGetPosition(camera)
+
+	gfx.DisableBlending()
+	gfx.DepthState(true, gfx.LESS, true)
+	gfx.Clear(gfx.COLOR_BUFFER_BIT | gfx.DEPTH_BUFFER_BIT, mat.v4_(0.3, 0.5, 0.6, 1.0), 1.0D, 0)
+
+	//sky
+	gfx.EffectUse(gfx.g_fxSky)
+	gfx.EffectAssignTexture(gfx.g_fxSky, gfx.SAMPLER_ENV_DIFFUSE, skySpecular, gfx.g_linearWrap)
+	gfx.EffectAssignMatrix4(gfx.g_fxSky, gfx.UNIFORM_WORLD, identity, false)
+	gfx.EffectAssignMatrix4(gfx.g_fxSky, gfx.UNIFORM_VIEW, view, false)
+	gfx.EffectAssignMatrix4(gfx.g_fxSky, gfx.UNIFORM_PROJECTION, projection, false)
+	gfx.MeshRender(skyMesh)
+
+	// ground
+	gfx.EffectUse(gfx.g_fxTexture3D)
+	gfx.EffectAssignTexture(gfx.g_fxTexture3D, gfx.SAMPLER_COLOR_0, texture, gfx.g_linearWrap)
+	gfx.EffectAssignMatrix4(gfx.g_fxTexture3D, gfx.UNIFORM_VIEW, view, false)
+	gfx.EffectAssignMatrix4(gfx.g_fxTexture3D, gfx.UNIFORM_PROJECTION, projection, false)
+	var pos mat.v3 = phx.GetObjectPosition(phxGround0)
+	var rot mat.v4 = phx.GetObjectRotation(phxGround0)
+	var quat mat.v4 = mat.QuaternionFromAxisAngle(rot.x, rot.y, rot.z, rot.w)
+	world = mat.MatrixCreate2(world, 1.0, 1.0, 1.0, quat.x, quat.y, quat.z, quat.w, pos.x, pos.y, pos.z)
+	gfx.EffectAssignMatrix4(gfx.g_fxTexture3D, gfx.UNIFORM_WORLD, world, false)
+	gfx.MeshRender(groundMesh)
+	pos = phx.GetObjectPosition(phxGround1)
+	rot = phx.GetObjectRotation(phxGround1)
+	quat = mat.QuaternionFromAxisAngle(rot.x, rot.y, rot.z, rot.w)
+	world = mat.MatrixCreate2(world, 1.0, 1.0, 1.0, quat.x, quat.y, quat.z, quat.w, pos.x, pos.y, pos.z)
+	gfx.EffectAssignMatrix4(gfx.g_fxTexture3D, gfx.UNIFORM_WORLD, world, false)
+	gfx.MeshRender(groundMesh)
+
+	// physics
+	phx.Render(identity, view, projection)
+
+	// skyminer
+	gfx.ModelSetView(skyminerModel, view)
+	gfx.ModelSetProjection(skyminerModel, projection)
+	gfx.ModelSetEnvironmentSpecular(skyminerModel, skySpecular)
+	gfx.ModelSetEnvironmentDiffuse(skyminerModel, skyDiffuse)
+	gfx.ModelSetBRDF(skyminerModel, brdf)
+	gfx.ModelSetCameraPosition(skyminerModel, cameraPosition)
+	for i := 0; i < phx.GetObjectCount(); i++ {
+		if phx.GetObjectTag(i) == TAG_MINER {
+			pos = phx.GetObjectPosition(i)
+			rot = phx.GetObjectRotation(i)
+			quat = mat.QuaternionFromAxisAngle(rot.x, rot.y, rot.z, rot.w)
+			world = mat.MatrixCreate2(world, skyminerScale, skyminerScale, skyminerScale, quat.x, quat.y, quat.z, quat.w, pos.x, pos.y, pos.z)
+			gfx.ModelSetWorld(skyminerModel, world)
+			gfx.ModelRender(skyminerModel)
+		}
+	}
+}
+
+//-----------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
+func skycoinOnUpdate(controlIndex i32, controlAction i32) {
+	if snd.VoiceState(voiceId) == snd.VOICE_STOPPED {
+		snd.VoicePlay(voiceId)
+	}
+}
+
+//-----------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
+func onPlayButton(controlIndex i32, controlAction i32) {
+	if controlAction == app.KEY_PRESS {
+		gui.ScreenShow(gameScreen)
+	} else if controlAction != app.KEY_RELEASE && controlAction != app.KEY_REPEAT {
+		panicIfNot(false, "invalid action")
+	}
+}
+
+//-----------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
+func onExitButton(controlIndex i32, controlAction i32) {
+	if controlAction == app.KEY_PRESS {
+		gui.ScreenShow(exitScreen)
+	} else if controlAction != app.KEY_RELEASE && controlAction != app.KEY_REPEAT {
+		panicIfNot(false, "invalid action")
+	}
+}
+
+//-----------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
+func onExitDialogNo(controlIndex i32, controlAction i32) {
+	if (controlAction == app.KEY_PRESS) {
+		printf("NO PRESSED\n")
+	} else if (controlAction == app.KEY_RELEASE) {
+		printf("NO RELEASED\n")
+		gui.ScreenHideModal(exitScreen)
+		printf("HERE\n")
+	} else if (controlAction == app.KEY_REPEAT) {
+		printf("NO REPEAT\n")
+	} else {
+		panicIfNot(false, "invalid controlAction")
+	}
+}
+
+//-----------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
+func onExitDialogYes(controlIndex i32, controlAction i32) {
+	if (controlAction == app.KEY_PRESS) {
+		printf("YES PRESSED\n")
+	} else if (controlAction == app.KEY_RELEASE) {
+		printf("YES RELEASED\n")
+		gui.ScreenHideModal(exitScreen)
+		app.Exit()
+	} else if (controlAction == app.KEY_REPEAT) {
+		printf("YES REPEAT\n")
+	} else {
+		panicIfNot(false, "invalid action")
+	}
+}
+
+//-----------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
+func loadModel(path str, filename str, s f32, r f32, v f32) (out gfx.ModelId) {
+	out = gfx.ModelCreateFromFile(sprintf("%s/models/%s/", app.DataDir(), path), filename)
+}
+
+//-----------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
+func main()() {
+	// init
+	gam.Init("skylight", 1024, 768, 60, "")
+	phx.Init(30U, -9.8)
+
+	skyMesh = gfx.MeshLock(gfx.TRIANGLES, gfx.UNSIGNED_SHORT, 36, gfx.g_vertexLayout, 24);
+	gfx.MeshBegin(skyMesh)
+	gfx.MeshAppendBox(skyMesh, false, true,
+		mat.v3_(0.0, 0.0, 0.0),
+		mat.v3_(5000.0, 0.0, 0.0), mat.v3_(0.0, 5000.0, 0.0), mat.v3_(0.0, 0.0, 5000.0),
+		mat.v4_(1.0, 1.0, 1.0, 1.0))
+	gfx.MeshEnd(skyMesh)
+
+	//skyminerModel = loadModel("Skyminer_7_0/", "skyminer_low.gltf", 0.01, 0.01, 0.0)
+	skyminerModel = loadModel("Skyminer_7_1/", "skyminer_low_test.gltf", 0.01, 0.01, 0.0)
+	//skyminerModel = loadModel("Skyminer_7_2/", "skyminer_low.gltf", 0.01, 0.01, 0.0)
+
+	phxPlayer = phx.AddObject(phx.TYPE_ELLIPSE, TAG_PLAYER, phx.STATE_TRANSLATE | phx.STATE_DEBUG | phx.STATE_DEBUG_COLOR,
+			mat.v3_(4.0 + f32.rand() * 20.0, 4.0 + f32.rand() * 2.0, -25.0 + f32.rand() * 20.0), mat.v3_(0.0, 0.0, 0.0), mat.v3_(0.0, 0.0, 0.0),
+			mat.v3_(1.0, 0.0, 0.0), mat.v3_(0.0, 1.0, 0.0), mat.v3_(0.0, 0.0, 1.0),
+			75.0 + f32.rand() * 50.0, mat.v4_(0.0, 0.0, 1.0, 0.0))
+
+	groundMesh = gfx.MeshLock(gfx.TRIANGLES, gfx.UNSIGNED_SHORT, 6 * groundWidth * groundHeight, gfx.g_vertexLayout, 6 * groundWidth * groundHeight)
+	gfx.MeshBegin(groundMesh)
+	gfx.MeshAppendPlane(groundMesh, false, true,
+		mat.v3_(0.0, 0.0, 0.0),
+		mat.v3_(groundRight, 0.0, 0.0),
+		mat.v3_(0.0, 1.0, 0.0),
+		mat.v3_(0.0, 0.0, groundBack),
+		groundWidth, groundHeight,
+		mat.v4_(0.0, 0.0, 10.0, 10.0),
+		mat.v4_(1.0, 1.0, 1.0, 1.0))
+	gfx.MeshEnd(groundMesh)
+	phxGround0 = phx.AddObject(phx.TYPE_PLANE, TAG_GROUND, phx.STATE_ACTIVE | phx.STATE_DEBUG | phx.STATE_DEBUG_COLOR | phx.STATE_DEBUG_WIRE,
+		mat.v3_(0.0, worldPosY, 0.0), mat.v3_(0.0, 0.0, 0.0), mat.v3_(0.0, 0.0, 0.0),
+		mat.v3_(groundRight, 0.0, 0.0), mat.v3_(0.0, 1.0, 0.0), mat.v3_(0.0, 0.0, groundBack),
+		0.0, mat.v4_(0.0, 1.0, 0.0, 0.0))
+	phx.SetObjectRotation(phxGround0, mat.v4_(0.0, 0.0, 1.0, 0.2))
+	phxGround1 = phx.AddObject(phx.TYPE_PLANE, TAG_GROUND, phx.STATE_ACTIVE | phx.STATE_DEBUG | phx.STATE_DEBUG_COLOR | phx.STATE_DEBUG_WIRE,
+		mat.v3_(-100.0, 2.0 * worldPosY, 0.0), mat.v3_(0.0, 0.0, 0.0), mat.v3_(0.0, 0.0, 0.0),
+		mat.v3_(groundRight, 0.0, 0.0), mat.v3_(0.0, 1.0, 0.0), mat.v3_(0.0, 0.0, groundBack),
+		0.0, mat.v4_(0.0, 1.0, 0.0, 0.0))
+
+	texture = gfx.TextureCreate(sprintf("%s/textures/Skycoin-Cloud-BW-Vertical-on_black@2x.png", app.DataDir()),
+		gfx.FORMAT_R8_G8_B8_A8, 0, 0, -1, false)
+	skySpecular = gfx.TextureCreateCube(sprintf("%s/textures/skybox/", app.DataDir()), ".jpg",
+		gfx.FORMAT_R8_G8_B8_A8, 0, 0, -1, false)
+	skyDiffuse= gfx.TextureCreateCube(sprintf("%s/textures/irradiance/", app.DataDir()), ".png",
+		gfx.FORMAT_R8_G8_B8_A8, 0, 0, 0, false)
+	brdf = gfx.TextureCreate(sprintf("%s/textures/brdfLUT.png", app.DataDir()),
+		gfx.FORMAT_R8_G8_B8_A8, 0, 0, 0, false)
+
+	camera = gam.CameraCreate()
+	gam.CameraSetProjection(camera, 1.0, 10000.0, 0.5, gfx.gfx_viewportSize.x, gfx.gfx_viewportSize.y, true)
+	gam.CameraSetPosition(camera, mat.v3_(0.0, worldPosY + 1.0, 0.0), true)
+	gam.CameraSetYawPitch(camera, 0.0, 0.0, true)
+
+	identity = mat.MatrixIdentity(identity)
+	var audioId snd.AudioId = snd.AudioCreate(sprintf("%s/audios/skycoin_baby.wav", app.DataDir()))
+	voiceId = snd.VoiceCreate(audioId)
+
+   	// exitScreen
+	exitScreen  = gui.ScreenCreate("exitScreen")
+	gui.ControlSetSkin(exitScreen.base, gui.g_modalSkin)
+	gui.ControlSetDock(exitScreen.base, gui.DOCK_FILL)
+	gui.ScreenSetDuration(exitScreen, -2.0D)
+	gui.ScreenSetModal(exitScreen, true)
+
+	{
+		var exitWindow gui.WindowId = gui.WindowCreate("exitWindow")
+		gui.ControlAddChild(exitScreen.base, exitWindow.base)
+		gui.ControlSetSkin(exitWindow.base, gui.g_windowSkin)
+		gui.ControlSetAutosize(exitWindow.base, gui.AUTOSIZE)
+		gui.ControlSetAlign(exitWindow.base, gui.ALIGN_CENTER)
+		gui.WindowSetCaption(exitWindow, "cxfx")
+		gui.WindowAddButton(exitWindow, "no", "No", "main", "onExitDialogNo")
+		gui.WindowAddButton(exitWindow, "yes", "Yes", "main", "onExitDialogYes")
+
+		{
+			var exitLabel gui.LabelId = gui.LabelCreate("exitLabel")
+			gui.WindowSetContainee(exitWindow, exitLabel.base)
+			gui.ControlSetDock(exitLabel.base, gui.DOCK_FILL)
+			gui.ControlSetAutosize(exitLabel.base, gui.AUTOSIZE)
+			gui.LabelSetFont(exitLabel, gui.g_regularFont)
+			gui.LabelSetText(exitLabel, "Do you want to quit ?")
+			gui.LabelSetSize(exitLabel, gui.g_fontSizeText)
+			gui.LabelSetColor(exitLabel, gui.g_white)
+			gui.LabelSetAlign(exitLabel, gui.ALIGN_CENTER)
+		}
+	}
+	// mainScreen
+	var mainScreen gui.ScreenId = gui.ScreenCreate("mainScreen")
+	gui.ControlSetSkin(mainScreen.base, gui.g_blackSkin)
+	gui.ControlSetDock(mainScreen.base, gui.DOCK_FILL)
+	gui.ControlSetPadding(mainScreen.base, mat.v4_(200.0, 150.0, 200.0, 150.0))
+	gui.ScreenSetDuration(mainScreen, -1.0D)
+	gui.ScreenSetOnExit(mainScreen, exitScreen)
+	{
+		var playButton gui.LabelId = gui.LabelCreate("playButton")
+		gui.ControlAddChild(mainScreen.base, playButton.base)
+		gui.ControlSetSkin(playButton.base, gui.g_blueSkin)
+		gui.ControlSetDock(playButton.base, gui.DOCK_TOP)
+		gui.ControlSetFocusable(playButton.base, 1)
+		gui.ControlSetPadding(playButton.base, mat.v4_(5.0, 5.0, 5.0, 5.0))
+		gui.ControlSetAutosize(playButton.base, gui.AUTOSIZE_Y)
+		gui.LabelSetFont(playButton, gui.g_boldFont)
+		gui.LabelSetText(playButton, "Play")
+		gui.LabelSetOnState(playButton, "main", "onPlayButton")
+		gui.LabelSetSize(playButton, gui.g_fontSizeButton)
+		gui.LabelSetColor(playButton, gui.g_white)
+		gui.LabelSetAlign(playButton, gui.ALIGN_CENTER)
+
+		var exitButton gui.LabelId = gui.LabelCreate("exitButton")
+		gui.ControlAddChild(mainScreen.base, exitButton.base)
+		gui.ControlSetSkin(exitButton.base, gui.g_blueSkin)
+		gui.ControlSetDock(exitButton.base, gui.DOCK_TOP)
+		gui.ControlSetFocusable(exitButton.base, 1)
+		gui.ControlSetPadding(exitButton.base, mat.v4_(5.0, 5.0, 5.0, 5.0))
+		gui.ControlSetAutosize(exitButton.base, gui.AUTOSIZE_Y)
+		gui.LabelSetFont(exitButton, gui.g_boldFont)
+		gui.LabelSetText(exitButton, "Exit")
+		gui.LabelSetOnState(exitButton, "main", "onExitButton")
+		gui.LabelSetSize(exitButton, gui.g_fontSizeButton)
+		gui.LabelSetColor(exitButton, gui.g_white)
+		gui.LabelSetAlign(exitButton, gui.ALIGN_CENTER)
+	}
+
+	// gameScreen
+	gameScreen = gui.ScreenCreate("gameScreen")
+	gui.ControlSetDock(gameScreen.base, gui.DOCK_FILL)
+	gui.ScreenSetDuration(gameScreen, -1.0D)
+	gui.ScreenSetOnExit(gameScreen, mainScreen)
+	gui.ScreenSetOnEvent(gameScreen, "main", "gameOnEvent")
+	gui.ScreenSetOnUpdate(gameScreen, "main", "gameOnUpdate")
+	gui.ScreenSetOnRender(gameScreen, "main", "gameOnRender")
+
+	// titleScreen
+	var titleScreen gui.ScreenId = gui.ScreenCreate("titleScreen")
+	gui.ControlSetSkin(titleScreen.base, gui.g_blackSkin)
+	gui.ControlSetDock(titleScreen.base, gui.DOCK_FILL)
+	gui.ScreenSetDuration(titleScreen, 2.0D)
+	gui.ScreenSetOnNext(titleScreen, mainScreen)
+	{
+		var label gui.LabelId= gui.LabelCreate("titleLabel")
+		gui.ControlAddChild(titleScreen.base, label.base)
+		gui.ControlSetBounds(label.base, mat.v4_(0.0, 0.0, gfx.gfx_width, gfx.gfx_height))
+		gui.ControlSetAlign(label.base, gui.ALIGN_CENTER)
+		gui.LabelSetFont(label, gui.g_boldFont)
+		gui.LabelSetText(label, app.Name())
+		gui.LabelSetSize(label, gui.g_fontSizeTitle)
+		gui.LabelSetAlign(label, gui.ALIGN_CENTER)
+		gui.LabelSetColor(label, gui.g_gold)
+	}
+
+	// skycoinScreen
+	var skycoinScreen gui.ScreenId = gui.ScreenCreate("skycoinSceen")
+	gui.ControlSetSkin(skycoinScreen.base, gui.g_blackSkin)
+	gui.ControlSetDock(skycoinScreen.base, gui.DOCK_FILL)
+	gui.ScreenSetDuration(skycoinScreen, 2.0D)
+	gui.ScreenSetOnUpdate(skycoinScreen, "main", "skycoinOnUpdate")
+	gui.ScreenSetOnNext(skycoinScreen, titleScreen)
+	{
+		var picture PictureId = gui.PictureCreate("skycoinPicture")
+		gui.ControlAddChild(skycoinScreen.base, picture.base)
+		gui.ControlSetBounds(picture.base, mat.v4_(0.0, 0.0, gfx.gfx_width / 2.0, gfx.gfx_height / 2.0))
+		gui.ControlSetAlign(picture.base, gui.ALIGN_CENTER)
+		gui.ControlSetAutoscale(picture.base, gui.AUTOSCALE)
+		gui.PictureSetAlign(picture, gui.ALIGN_CENTER)
+		gui.PictureSetAnimation(picture, gui.g_skycoinAnim)
+	}
+
+	// bootScreen
+	var bootScreen gui.ScreenId = gui.ScreenCreate("bootScreen")
+	gui.ControlSetSkin(bootScreen.base, gui.g_bootSkin)
+	gui.ControlSetDock(bootScreen.base, gui.DOCK_FILL)
+	gui.ScreenSetDuration(bootScreen, 2.0D)
+	gui.ScreenSetOnNext(bootScreen, skycoinScreen)
+
+	// run
+	gui.ScreenShow(bootScreen)
+	gam.Run(2U)
+
+	// destroy
+	gfx.MeshUnlock(skyMesh)
+	gfx.MeshUnlock(groundMesh)
+	gam.Destroy()
+}
+
