@@ -21,6 +21,9 @@ var skyminerScale f32 = 0.005
 
 var groundMesh gfx.MeshId = gfx.InvalidMesh()
 var texture gfx.TextureId = gfx.InvalidTexture()
+var dollar gfx.TextureId = gfx.InvalidTexture()
+
+var dollarMesh gfx.MeshId = gfx.InvalidMesh()
 
 var skyMesh gfx.MeshId = gfx.InvalidMesh()
 var skyDiffuse gfx.TextureId = gfx.InvalidTexture()
@@ -29,6 +32,8 @@ var brdf gfx.TextureId = gfx.InvalidTexture()
 
 var world [] f32 = mat.MatrixAlloc()
 var identity [] f32 = mat.MatrixAlloc()
+var tmpMatrix []f32 = mat.MatrixAlloc()
+var tmpColor []f32
 
 var camera gam.CameraId
 
@@ -52,9 +57,10 @@ var groundHeight i32 = 16
 
 var voiceId snd.VoiceId
 
-var TAG_MINER i32 = 1
-var TAG_GROUND i32 = 2
-var TAG_PLAYER i32 = 3
+var TAG_GROUND i32 = 1
+var TAG_PLAYER i32 = 2
+var TAG_MINER i32 = 3
+var TAG_DOLLAR i32 = 4
 
 var CAMERA_FREE i32 = 0
 var CAMERA_TPS i32 = 1
@@ -62,74 +68,62 @@ var CAMERA_FPS i32 = 2
 var CAMERA_COUNT i32 = 3
 var currentCamera i32 = CAMERA_FPS
 
+var fireWeapon i32 = 0
+
+var WEAPON_SKYNOTE i32 = 0
+var WEAPON_SKYMINER i32 = 1
+var WEAPON_COUNT i32 = 2
+
+var currentWeapon i32 = WEAPON_SKYNOTE
+
 //-----------------------------------------------------------------------------
 //-----------------------------------------------------------------------------
 func gameOnEvent(controlIndex i32, controlAction i32) {
 	var key i32 = gui.CurrentEvent.keyboard.key
 	var action i32 = gui.CurrentEvent.keyboard.action
 	var mods i32 = gui.CurrentEvent.keyboard.mods
-	if mods == app.MOD_CTRL && action == app.KEY_PRESS {
-		if key == app.KEYCODE_LEFT {
-		} else if key == app.KEYCODE_RIGHT {
+
+	if mods == app.MOD_CTRL {
+		if action == app.KEY_PRESS {
+			if key == app.KEYCODE_LEFT {
+			} else if key == app.KEYCODE_RIGHT {
+			} else if key == app.KEYCODE_UP {
+			} else if key == app.KEYCODE_DOWN {
+			}
+		}
+	} else if mods == app.MOD_SHIFT {
+		if action == app.KEY_PRESS {
+			if key == app.KEYCODE_LEFT {
+				currentCamera = currentCamera - 1
+				if currentCamera < 0 {
+					currentCamera = CAMERA_COUNT - 1
+				}
+			} else if key == app.KEYCODE_RIGHT {
+				currentCamera = currentCamera + 1
+				if currentCamera >= CAMERA_COUNT {
+					currentCamera = 0
+				}
+			}
 		} else if key == app.KEYCODE_UP {
 		} else if key == app.KEYCODE_DOWN {
 		}
-	} else if mods == app.MOD_SHIFT && action == app.KEY_PRESS {
-		if key == app.KEYCODE_LEFT {
-			currentCamera = currentCamera - 1
-			if currentCamera < 0 {
-				currentCamera = CAMERA_COUNT - 1
+	} else if mods == app.MOD_NONE {
+		if action == app.KEY_PRESS {
+			if key == app.KEYCODE_SPACE {
+				if currentWeapon == WEAPON_SKYNOTE {
+					fireWeapon = 1
+				} else if currentWeapon == WEAPON_SKYMINER {
+					fireWeapon = 1
+				}
+			} else if key == app.KEYCODE_1 {
+				currentWeapon = WEAPON_SKYMINER
+			} else if key == app.KEYCODE_2 {
+				currentWeapon = WEAPON_SKYNOTE
 			}
-		} else if key == app.KEYCODE_RIGHT {
-			currentCamera = currentCamera + 1
-			if currentCamera >= CAMERA_COUNT {
-				currentCamera = 0
+		} else if action == app.KEY_RELEASE {
+			if key == app.KEYCODE_SPACE {
+				fireWeapon = 0
 			}
-		} else if key == app.KEYCODE_UP {
-		} else if key == app.KEYCODE_DOWN {
-		}
-	} else if action == app.KEY_PRESS {
-		if key == app.KEYCODE_SPACE {
-			var position mat.v3 = gam.CameraGetPosition(camera)
-			position = mat.v3_add(position, mat.v3_(0.0, 0.5, 0.0))
-
-			var objType i32 = i32.rand(1, phx.TYPE_CUSTOM + 1)
-			var at mat.v3 = mat.v3_mulf(gam.CameraGetAt(camera), -1.0)
-			var axis mat.v3 = mat.v3_normalize(mat.v3_rand())
-			var state i32 = phx.STATE_TRANSLATE | phx.STATE_ROTATE
-
-			var mass f32
-			var right mat.v3
-			var top mat.v3
-			var back mat.v3
-			var objTag i32
-
-			objType = phx.TYPE_CUSTOM
-			if objType == phx.TYPE_CUSTOM {
-				//state = state | phx.STATE_DEBUG | phx.STATE_DEBUG_COLOR | phx.STATE_DEBUG_WIRE
-				objType = phx.TYPE_BOX
-				objTag = TAG_MINER
-				mass = 20.0 + f32.abs(f32.rand()) * 10.0
-				var min mat.v3 = gfx.ModelGetMin(skyminerModel)
-				var max mat.v3 = gfx.ModelGetMax(skyminerModel)
-				var radius f32 = skyminerScale * 0.51
-				right = mat.v3_(radius * (max.x - min.x), 0.0, 0.0)
-				top = mat.v3_(0.0, radius * (max.y - min.y), 0.0)
-				back = mat.v3_(0.0, 0.0, radius * (max.z - min.z))
-			}/* else {
-				state = state | phx.STATE_DEBUG | phx.STATE_DEBUG_COLOR
-				right = mat.v3_(0.5 + f32.rand() * 0.5, 0.0, 0.0)
-				top = mat.v3_(0.0, 0.5 + f32.rand() * 0.5, 0.0)
-				back = mat.v3_(0.0, 0.0, 0.5 + f32.rand() * 0.5)
-				mass = 10.0 + f32.abs(f32.rand()) * 100.0
-			}*/
-
-			var force f32 = 200000.0
-			var acceleration mat.v3 = mat.v3_mulf(at, force / mass)
-
-			var miner i32 = phx.AddObject(objType, objTag, state, position, mat.v3_(0.0, 0.0, 0.0), acceleration,
-				right, top, back, mass,
-				mat.v4_(axis.x, axis.y, axis.z, f32.rand()))
 		}
 	}
 
@@ -140,14 +134,66 @@ func gameOnEvent(controlIndex i32, controlAction i32) {
 	}
 
 	if currentCamera == CAMERA_FREE {
-		//printf("FREE\n")
 		gam.FreeCameraProcess(camera, &gui.CurrentEvent)
 	} else if currentCamera == CAMERA_FPS {
-		//printf("FIRST\n")
 		gam.FpsCameraProcess(camera, &gui.CurrentEvent)
 	} else if currentCamera == CAMERA_TPS {
-		//printf("THIRD\n")
 		gam.TpsCameraProcess(camera, &gui.CurrentEvent)
+	}
+}
+
+func fireSkyminer() {
+	var position mat.v3 = mat.v3_add(gam.CameraGetPosition(camera), mat.v3_(-0.1, 0.1, 0.0))
+
+	var objType i32 = phx.TYPE_BOX
+	var objTag i32 = TAG_MINER
+
+	var state i32 = phx.STATE_TRANSLATE | phx.STATE_ROTATE
+
+	var at mat.v3 = mat.v3_normalize(mat.v3_mulf(gam.CameraGetAt(camera), -1.0))
+	var axis mat.v3 = mat.v3_normalize(mat.v3_rand())
+
+	var mass f32 = 5.0
+	var force f32 = 10000.0
+
+	var min mat.v3 = gfx.ModelGetMin(skyminerModel)
+	var max mat.v3 = gfx.ModelGetMax(skyminerModel)
+	var radius f32 = skyminerScale * 0.51
+
+	var right mat.v3 = mat.v3_(radius * (max.x - min.x), 0.0, 0.0)
+	var top mat.v3 = mat.v3_(0.0, radius * (max.y - min.y), 0.0)
+	var back mat.v3 = mat.v3_(0.0, 0.0, radius * (max.z - min.z))
+
+	var acceleration mat.v3 = mat.v3_mulf(at, force / mass)
+
+	var miner i32 = phx.AddObject(objType, objTag, state, position, mat.v3_(0.0, 0.0, 0.0), acceleration,
+		right, top, back, mass, mat.v4_(axis.x, axis.y, axis.z, f32.rand() * 10.0))
+}
+
+func fireSkynotes() {
+	var position mat.v3 = mat.v3_add(gam.CameraGetPosition(camera), mat.v3_(-0.1, 0.1, 0.0))
+
+	var objType i32 = phx.TYPE_PLANE
+	var objTag i32 = TAG_DOLLAR
+
+	var state i32 = phx.STATE_TRANSLATE | phx.STATE_ROTATE
+
+	var mass f32 = 0.01
+
+	var skynoteCount i32 = i32.rand(1, 10)
+	for i := 0; i < skynoteCount; i++ {
+		var at mat.v3 = mat.v3_normalize(mat.v3_add(mat.v3_mulf(gam.CameraGetAt(camera), -1.0), mat.v3_(f32.rand() * 0.1, f32.rand() * 0.1, f32.rand() * 0.1)))
+		var axis mat.v3 = mat.v3_normalize(mat.v3_rand())
+
+		var force f32 = 20.0 + f32.rand() * 1.0
+		var right mat.v3 = mat.v3_(0.5 + f32.rand() * 0.5, 0.0, 0.0)
+		var top mat.v3 = mat.v3_(0.0, 0.5 + f32.rand() * 0.5, 0.0)
+		var back mat.v3 = mat.v3_(0.0, 0.0, 0.5 + f32.rand() * 0.5)
+
+		var acceleration mat.v3 = mat.v3_mulf(at, force / mass)
+
+		var miner i32 = phx.AddObject(objType, objTag, state, position, mat.v3_(0.0, 0.0, 0.0), acceleration,
+			right, top, back, mass, mat.v4_(axis.x, axis.y, axis.z, f32.rand() * 10.0))
 	}
 }
 
@@ -162,12 +208,21 @@ func gameOnUpdate(controlIndex i32, controlAction i32) {
 	}
 	// << HACK : start cx profiling
 
+
+	if fireWeapon > 0 {
+		if currentWeapon == WEAPON_SKYMINER {
+			fireSkyminer()
+			fireWeapon = 0
+		} else if currentWeapon == WEAPON_SKYNOTE {
+			fireSkynotes()
+		}
+	}
+
 	phx.Update(fps.DeltaNano())
 
 	var dts f64 = fps.DeltaSecond()
 	var playerPosition mat.v3 = phx.GetObjectPosition(phxPlayer)
 
-	//printf("--------------------------------------------------------------------- CAMERA_UPDATE\n")
 	if currentCamera == CAMERA_FREE {
 		gam.FreeCameraUpdate(camera, dts)
 	} else if currentCamera == CAMERA_FPS {
@@ -180,7 +235,8 @@ func gameOnUpdate(controlIndex i32, controlAction i32) {
 
 	var i i32
 	for i = 0; i < phx.GetObjectCount(); i++ {
-		if phx.GetObjectTag(i) == TAG_MINER {
+		var objTag i32 = phx.GetObjectTag(i)
+		if objTag == TAG_MINER || objTag == TAG_DOLLAR {
 			var position mat.v3 = phx.GetObjectPosition(i)
 			if position.y < worldPosY * 2.0 {
 				phx.RemoveObject(i)
@@ -248,6 +304,76 @@ func gameOnRender(controlIndex i32, controlAction i32) {
 			gfx.ModelRender(skyminerModel)
 		}
 	}
+
+	var size mat.v3 = mat.v3_mulf(mat.v3_(1.0, 1.0, 0.5), 0.75)
+	gfx.MeshBegin(dollarMesh)
+
+	for i := 0; i < phx.GetObjectCount(); i++ {
+		if phx.GetObjectTag(i) == TAG_DOLLAR {
+			pos = phx.GetObjectPosition(i)
+			rot = phx.GetObjectRotation(i)
+			var quat mat.v4 = mat.QuaternionFromAxisAngle(rot.x, rot.y, rot.z, rot.w)
+			var rotation []f32 = mat.MatrixCreateRotationFromQuaternion(tmpMatrix, quat.x, quat.y, quat.z, quat.w)
+			var right mat.v3 = mat.v3_transform_vector(mat.v3_(size.x, 0.0, 0.0), rotation)
+			var top mat.v3 = mat.v3_transform_vector(mat.v3_(0.0, size.y, 0.0), rotation)
+			var back mat.v3 = mat.v3_transform_vector(mat.v3_(0.0, 0.0, size.z), rotation)
+			gfx.MeshAppendPlane(dollarMesh, false, true, pos, right, top, back, 2, 2, mat.v4_(0.5, 0.5, 1.0, 1.0), mat.v4_(1.0, 1.0, 1.0, 1.0))
+		}
+	}
+	gfx.MeshEnd(dollarMesh)
+	gfx.DepthState(true, gfx.LESS, true)
+
+	gfx.TemplateSetKey(gfx.g_tfxPbr, gfx.USE_COLOR_UNI, true)
+	gfx.TemplateSetKey(gfx.g_tfxPbr, gfx.USE_COLOR_VTX, false)
+	gfx.TemplateSetKey(gfx.g_tfxPbr, gfx.USE_COLOR_MAP, true)
+	gfx.TemplateSetKey(gfx.g_tfxPbr, gfx.USE_PBR_UNI, true)
+	gfx.TemplateSetKey(gfx.g_tfxPbr, gfx.USE_PBR_MAP, false)
+	gfx.TemplateSetKey(gfx.g_tfxPbr, gfx.USE_EMISSIVE_UNI, false)
+	gfx.TemplateSetKey(gfx.g_tfxPbr, gfx.USE_EMISSIVE_MAP, false)
+	gfx.TemplateSetKey(gfx.g_tfxPbr, gfx.USE_NORMAL_VTX, false)
+	gfx.TemplateSetKey(gfx.g_tfxPbr, gfx.USE_NORMAL_MAP, false)
+	gfx.TemplateSetKey(gfx.g_tfxPbr, gfx.USE_TANGENT_VTX, false)
+	gfx.TemplateSetKey(gfx.g_tfxPbr, gfx.USE_OCCLUSION_MAP, false)
+	gfx.TemplateSetKey(gfx.g_tfxPbr, gfx.USE_SKIN, false)
+	gfx.TemplateSetKey(gfx.g_tfxPbr, gfx.USE_DEBUG_A, true)
+
+	var effect gfx.EffectId = gfx.TemplateInstance(gfx.g_tfxPbr)
+
+	gfx.EffectUse(effect)
+	gfx.EffectAssignTexture(effect, gfx.SAMPLER_COLOR_0, dollar, gfx.g_linear0Wrap)
+	gfx.EffectAssignTexture(effect, gfx.SAMPLER_ENV_SPECULAR, skySpecular, gfx.g_linearWrap)
+	gfx.EffectAssignTexture(effect, gfx.SAMPLER_ENV_DIFFUSE, skyDiffuse, gfx.g_linearWrap)
+	gfx.EffectAssignTexture(effect, gfx.SAMPLER_BRDF, brdf, gfx.g_linear0Wrap)
+
+	tmpColor[0] = 1.0
+	tmpColor[1] = 1.0
+	tmpColor[2] = 1.0
+	tmpColor[3] = 1.0
+	gfx.EffectAssignVector4(effect, gfx.UNIFORM_COLOR, tmpColor)
+
+	tmpColor[0] = 0.0
+	tmpColor[1] = 1.0
+	tmpColor[2] = 0.0
+	tmpColor[3] = 0.0
+	gfx.EffectAssignVector4(effect, gfx.UNIFORM_METAL_ROUGH, tmpColor)
+
+	//tmpColor[0] = 0.1
+	//tmpColor[1] = 0.1
+	//tmpColor[2] = 0.1
+	//tmpColor[3] = 1.0
+	//gfx.EffectAssignVector4(effect, gfx.UNIFORM_EMISSIVE, tmpColor)
+
+	tmpColor[0] = cameraPosition.x
+	tmpColor[1] = cameraPosition.y
+	tmpColor[2] = cameraPosition.z
+	tmpColor[3] = 1.0
+	gfx.EffectAssignVector4(effect, gfx.UNIFORM_CAMERA_POSITION, tmpColor)
+
+	gfx.EffectAssignMatrix4(effect, gfx.UNIFORM_WORLD, identity, false)
+	gfx.EffectAssignMatrix4(effect, gfx.UNIFORM_VIEW, view, false)
+	gfx.EffectAssignMatrix4(effect, gfx.UNIFORM_PROJECTION, projection, false)
+	gfx.MeshSetCulling(dollarMesh, gfx.CW, gfx.NONE)
+	gfx.MeshRender(dollarMesh)
 }
 
 //-----------------------------------------------------------------------------
@@ -282,13 +408,9 @@ func onExitButton(controlIndex i32, controlAction i32) {
 //-----------------------------------------------------------------------------
 func onExitDialogNo(controlIndex i32, controlAction i32) {
 	if (controlAction == app.KEY_PRESS) {
-		printf("NO PRESSED\n")
 	} else if (controlAction == app.KEY_RELEASE) {
-		printf("NO RELEASED\n")
 		gui.ScreenHideModal(exitScreen)
-		printf("HERE\n")
 	} else if (controlAction == app.KEY_REPEAT) {
-		printf("NO REPEAT\n")
 	} else {
 		panicIfNot(false, "invalid controlAction")
 	}
@@ -298,13 +420,10 @@ func onExitDialogNo(controlIndex i32, controlAction i32) {
 //-----------------------------------------------------------------------------
 func onExitDialogYes(controlIndex i32, controlAction i32) {
 	if (controlAction == app.KEY_PRESS) {
-		printf("YES PRESSED\n")
 	} else if (controlAction == app.KEY_RELEASE) {
-		printf("YES RELEASED\n")
 		gui.ScreenHideModal(exitScreen)
 		app.Exit()
 	} else if (controlAction == app.KEY_REPEAT) {
-		printf("YES REPEAT\n")
 	} else {
 		panicIfNot(false, "invalid action")
 	}
@@ -340,6 +459,7 @@ func main()() {
 			mat.v3_(1.0, 0.0, 0.0), mat.v3_(0.0, 1.0, 0.0), mat.v3_(0.0, 0.0, 1.0),
 			75.0 + f32.rand() * 50.0, mat.v4_(0.0, 0.0, 1.0, 0.0))
 
+	dollarMesh = gfx.MeshCreate(gfx.TRIANGLES, gfx.UNSIGNED_SHORT, 8192 * 3, gfx.g_vertexLayout, 8192 * 3)
 	groundMesh = gfx.MeshLock(gfx.TRIANGLES, gfx.UNSIGNED_SHORT, 6 * groundWidth * groundHeight, gfx.g_vertexLayout, 6 * groundWidth * groundHeight)
 	gfx.MeshBegin(groundMesh)
 	gfx.MeshAppendPlane(groundMesh, false, true,
@@ -361,20 +481,24 @@ func main()() {
 		mat.v3_(groundRight, 0.0, 0.0), mat.v3_(0.0, 1.0, 0.0), mat.v3_(0.0, 0.0, groundBack),
 		0.0, mat.v4_(0.0, 1.0, 0.0, 0.0))
 
+	dollar = gfx.TextureCreate(sprintf("%s/textures/skynote.png", app.DataDir()),
+		gfx.FORMAT_R8_G8_B8_A8, 0, 0, -1, false)
+
 	texture = gfx.TextureCreate(sprintf("%s/textures/Skycoin-Cloud-BW-Vertical-on_black@2x.png", app.DataDir()),
 		gfx.FORMAT_R8_G8_B8_A8, 0, 0, -1, false)
 	skySpecular = gfx.TextureCreateCube(sprintf("%s/textures/skybox/", app.DataDir()), ".jpg",
 		gfx.FORMAT_R8_G8_B8_A8, 0, 0, -1, false)
 	skyDiffuse= gfx.TextureCreateCube(sprintf("%s/textures/irradiance/", app.DataDir()), ".png",
-		gfx.FORMAT_R8_G8_B8_A8, 0, 0, 0, false)
+		gfx.FORMAT_R8_G8_B8_A8, 0, 0, -1, false)
 	brdf = gfx.TextureCreate(sprintf("%s/textures/brdfLUT.png", app.DataDir()),
 		gfx.FORMAT_R8_G8_B8_A8, 0, 0, 0, false)
 
 	camera = gam.CameraCreate()
-	gam.CameraSetProjection(camera, 1.0, 10000.0, 0.5, gfx.gfx_viewportSize.x, gfx.gfx_viewportSize.y, true)
+	gam.CameraSetProjection(camera, 0.1, 10000.0, 0.5, gfx.gfx_viewportSize.x, gfx.gfx_viewportSize.y, true)
 	gam.CameraSetPosition(camera, mat.v3_(0.0, worldPosY + 1.0, 0.0), true)
 	gam.CameraSetYawPitch(camera, 0.0, 0.0, true)
 
+	tmpColor = resize(tmpColor, 4)
 	identity = mat.MatrixIdentity(identity)
 	var audioId snd.AudioId = snd.AudioCreate(sprintf("%s/audios/skycoin_baby.wav", app.DataDir()))
 	voiceId = snd.VoiceCreate(audioId)
