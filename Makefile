@@ -3,7 +3,7 @@
 CX = $(GOPATH)/src/github.com/skycoin/cx
 CXFX = $(GOPATH)/src/github.com/asahi3g/cxfx
 
-0_colored_quad:
+skylight:
 	cx --debug-profile\
 		$(CX)/lib/args.cx\
 		$(CX)/lib/json.cx\
