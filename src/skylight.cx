@@ -13,14 +13,51 @@ import "phx"
 // TODO : dialog disapear if exit button is pushed with keyboard
 
 // Globals ...
+var backwardQuat mat.v4 = mat.QuaternionFromAxisAngle(0.0, 1.0, 0.0, mat.PI)
+var yawTime f32 = -1.0
 var gameScreen gui.ScreenId
 var exitScreen gui.ScreenId
 
 var skyminerModel gfx.ModelId = gfx.ModelInvalid()
-var skyminerScale f32 = 0.005
+var skyminerScale f32 = 0.1
+var skyminerPos mat.v3
 
-var playerModel gfx.ModelId = gfx.ModelInvalid()
+type Anim struct {
+	model gfx.ModelId
+	anim gfx.AnimationId
+}
+
+type Player struct {
+	idle Anim
+	throw Anim
+	jump Anim
+	forward Anim
+	backward Anim
+	left Anim
+	right Anim
+	spine i32
+	torso i32
+	shoulder i32
+	hand i32
+}
+
+var tmpAnim0 gfx.AnimationId = gfx.AnimationInvalid()
+var tmpAnim1 gfx.AnimationId = gfx.AnimationInvalid()
+var backward bool
+
+var tmpAnim2 gfx.AnimationId = gfx.AnimationInvalid()
+
+var switchAnimTime f32
+var currentAnim gfx.AnimationId = gfx.AnimationInvalid()
+var runtimeAnim gfx.AnimationId = gfx.AnimationInvalid()
+var previousAnim gfx.AnimationId = gfx.AnimationInvalid()
+
 var playerScale f32 = 0.1
+var playerWorld []f32 = gfx.MatrixAlloc()
+var players []Player
+var currentPlayer i32
+var previousPlayer i32
+var jumping bool
 
 var groundMesh gfx.MeshId = gfx.InvalidMesh()
 var texture gfx.TextureId = gfx.InvalidTexture()
@@ -36,6 +73,7 @@ var brdf gfx.TextureId = gfx.InvalidTexture()
 var world [] f32 = mat.MatrixAlloc()
 var identity [] f32 = mat.MatrixAlloc()
 var tmpMatrix []f32 = mat.MatrixAlloc()
+var tmpMatrix2 []f32 = mat.MatrixAlloc()
 var tmpColor []f32
 
 var camera gam.CameraId
@@ -64,6 +102,7 @@ var TAG_GROUND i32 = 1
 var TAG_PLAYER i32 = 2
 var TAG_MINER i32 = 3
 var TAG_DOLLAR i32 = 4
+var TAG_AIM i32 = 5
 
 var CAMERA_FREE i32 = 0
 var CAMERA_TPS i32 = 1
@@ -72,16 +111,37 @@ var CAMERA_COUNT i32 = 3
 var currentCamera i32 = CAMERA_FPS
 
 var fireWeapon i32 = 0
+var fireAnimTime f32 = -1.0
+var fireAnimLength f32 = -1.0
+var fireAnimThresh f32 = 1.1
+var fireAnimThrow f32 = 0.65
+var aimPosition mat.v3
+var aimMax i32 = 8
+var aimCount i32 = 0
+
+var phxRemoveList []i32
+var phxSortedList []i32
 
 var WEAPON_SKYNOTE i32 = 0
 var WEAPON_SKYMINER i32 = 1
 var WEAPON_COUNT i32 = 2
 
-var currentWeapon i32 = WEAPON_SKYNOTE
+var currentWeapon i32 = WEAPON_SKYMINER
 
 var xdir f32
+var ydir f32
 var zdir f32
 
+var MOVE_ i32 = 0
+var MOVE_TX i32 = 0
+var MOVE_TY i32 = 1
+var MOVE_TZ i32 = 2
+var MOVE_R i32 = 3
+var MOVE_COUNT i32 = 4
+var ffx f32
+var ffy f32
+var ffz f32
+var ffr f32
 //-----------------------------------------------------------------------------
 //-----------------------------------------------------------------------------
 func gameOnEvent(controlIndex i32, controlAction i32) {
@@ -90,6 +150,49 @@ func gameOnEvent(controlIndex i32, controlAction i32) {
 	var mods i32 = gui.CurrentEvent.keyboard.mods
 
 	if mods == app.MOD_CTRL {
+		if action == app.KEY_PRESS {
+			if key == app.KEYCODE_LEFT {
+				if action == app.KEY_PRESS {
+					currentPlayer = currentPlayer - 1
+					if currentPlayer < 0 {
+						currentPlayer = len(players) - 1
+					}
+				}
+			} else if key == app.KEYCODE_RIGHT {
+				if action == app.KEY_PRESS {
+					currentPlayer = currentPlayer + 1
+					if currentPlayer >= len(players) {
+						currentPlayer = 0
+					}
+				}
+			} else if key == app.KEYCODE_UP {
+				MOVE_ = MOVE_ + 1
+				MOVE_ = MOVE_ % MOVE_COUNT
+				if MOVE_ == MOVE_TX {
+					printf("-----------TRANSLATE XXX\n")
+				} else if MOVE_ == MOVE_TY {
+					printf("-----------TRANSLATE YYY\n")
+				} else if MOVE_ == MOVE_TZ {
+					printf("-----------TRANSLATE ZZZ\n")
+				} else if MOVE_ == MOVE_R {
+					printf("-----------ROTATE\n")
+				}
+			} else if key == app.KEYCODE_DOWN {
+				MOVE_ = MOVE_ - 1
+				if MOVE_ < 0 {
+					MOVE_ = MOVE_COUNT
+				}
+				if MOVE_ == MOVE_TX {
+					printf("-----------TRANSLATE XXX\n")
+				} else if MOVE_ == MOVE_TY {
+					printf("-----------TRANSLATE YYY\n")
+				} else if MOVE_ == MOVE_TZ {
+					printf("-----------TRANSLATE ZZZ\n")
+				} else if MOVE_ == MOVE_R {
+					printf("-----------ROTATE\n")
+				}
+			}
+		}
 	} else if mods == app.MOD_SHIFT {
 		if action == app.KEY_PRESS {
 			if key == app.KEYCODE_LEFT {
@@ -108,29 +211,69 @@ func gameOnEvent(controlIndex i32, controlAction i32) {
 				}
 			}
 		}
+
+		if key == app.KEYCODE_UP {
+			if MOVE_ == MOVE_TX {
+				ffx = ffx + 0.1
+			} else if MOVE_ == MOVE_TY {
+				ffy = ffy + 0.01
+			} else if MOVE_ == MOVE_TZ {
+				ffz = ffz + 0.1
+			} else if MOVE_ == MOVE_R {
+				ffr = ffr + 0.02
+			}
+			printf("tx %f, ty %f, tz %f, r %f\n", ffx, ffy, ffz, ffr)
+		} else if key == app.KEYCODE_DOWN {
+			if MOVE_ == MOVE_TX {
+				ffx = ffx - 0.1
+			} else if MOVE_ == MOVE_TY {
+				ffy = ffy - 0.01
+			} else if MOVE_ == MOVE_TZ {
+				ffz = ffz - 0.1
+			} else if MOVE_ == MOVE_R {
+				ffr = ffr - 0.02
+			}
+			printf("tx %f, ty %f, tz %f, r %f\n", ffx, ffy, ffz, ffr)
+		}
 	} else if mods == app.MOD_NONE {
    		if key == app.KEYCODE_LEFT || key == app.KEYCODE_A {
 			if action == app.KEY_PRESS {
+				switchAnimTime = -1.0
+				previousAnim = currentAnim
 				zdir = -1.0
 			} else if action == app.KEY_RELEASE {
+				switchAnimTime = -1.0
+				previousAnim = currentAnim
 				zdir = 0.0
 			}
 		} else if key == app.KEYCODE_RIGHT || key == app.KEYCODE_D {
 			if action == app.KEY_PRESS {
+				switchAnimTime = -1.0
+				previousAnim = currentAnim
 				zdir = 1.0
 			} else if action == app.KEY_RELEASE {
+				switchAnimTime = -1.0
+				previousAnim = currentAnim
 				zdir = 0.0
 			}
 		} else if key == app.KEYCODE_UP || key == app.KEYCODE_W {
 			if action == app.KEY_PRESS {
+				switchAnimTime = -1.0
+				previousAnim = currentAnim
 				xdir = -1.0
 			} else if action == app.KEY_RELEASE {
+				switchAnimTime = -1.0
+				previousAnim = currentAnim
 				xdir = 0.0
 			}
 		} else if key == app.KEYCODE_DOWN || key == app.KEYCODE_S {
 			if action == app.KEY_PRESS {
+				switchAnimTime = -1.0
+				previousAnim = currentAnim
 				xdir = 1.0
 			} else if action == app.KEY_RELEASE {
+				switchAnimTime = -1.0
+				previousAnim = currentAnim
 				xdir = 0.0
 			}
 		} else if key == app.KEYCODE_SPACE {
@@ -141,7 +284,12 @@ func gameOnEvent(controlIndex i32, controlAction i32) {
 					fireWeapon = 1
 				}
 			} else if action == app.KEY_RELEASE {
-				fireWeapon = 0
+				//fireWeapon = 0
+			}
+		} else if key == app.KEYCODE_V {
+			if phx.COLLIDED == true {
+				ydir = 1.0
+				jumping = true
 			}
 		} else if key == app.KEYCODE_1 {
 			if action == app.KEY_PRESS {
@@ -156,8 +304,12 @@ func gameOnEvent(controlIndex i32, controlAction i32) {
 
 	var mouseAction i32 = gui.CurrentEvent.mouse.action
 	var mouseButton i32 = gui.CurrentEvent.mouse.button
-
 	if mouseAction == app.MOUSE_PRESS && mouseButton == app.BUTTON_LEFT {
+	}
+
+	if mouseAction == app.MOUSE_MOVE {
+	var mousePosition mat.v2 = gui.CurrentEvent.mouse.position
+		aimPosition = mat.v3_(2.0 * mousePosition.x / gfx.gfx_width - 1.0, 2.0 * mousePosition.y / gfx.gfx_height - 1.0, 0.0)
 	}
 
 	if currentCamera == CAMERA_FREE {
@@ -169,6 +321,31 @@ func gameOnEvent(controlIndex i32, controlAction i32) {
 	}
 }
 
+func newAimBox(position mat.v3) {
+	var objType i32 = phx.TYPE_BOX
+	var objTag i32 = TAG_AIM
+
+	var state i32 = phx.STATE_TRANSLATE | phx.STATE_DEBUG
+
+	var axis mat.v3 = mat.v3_normalize(mat.v3_rand())
+
+	var mass f32 = 1.0
+
+	var min mat.v3 = mat.v3_(-1.0, -1.0, -1.0)
+	var max mat.v3 = mat.v3_(1.0, 1.0, 1.0)
+	var radius f32 = 2.5
+
+	var right mat.v3 = mat.v3_(radius * (max.x - min.x), 0.0, 0.0)
+	var top mat.v3 = mat.v3_(0.0, radius * (max.y - min.y), 0.0)
+	var back mat.v3 = mat.v3_(0.0, 0.0, radius * (max.z - min.z))
+
+
+	var miner i32 = phx.AddObject(objType, objTag, state, position, mat.v3_(0.0, f32.rand() * 10.0, 0.0), mat.v3_(0.0, 0.0, 0.0),
+		right, top, back, mass, 0.01, mat.v4_(0.0, 1.0, 0.0, 0.0),
+		mat.v4_(f32.rand(), f32.rand(), f32.rand(), 1.0))
+}
+
+
 func fireSkyminer(position mat.v3, direction mat.v3) {
 	var objType i32 = phx.TYPE_BOX
 	var objTag i32 = TAG_MINER
@@ -178,7 +355,7 @@ func fireSkyminer(position mat.v3, direction mat.v3) {
 	var axis mat.v3 = mat.v3_normalize(mat.v3_rand())
 
 	var mass f32 = 5.0
-	var force f32 = 10000.0
+	var force f32 = 400.0
 
 	var min mat.v3 = gfx.ModelGetMin(skyminerModel)
 	var max mat.v3 = gfx.ModelGetMax(skyminerModel)
@@ -190,8 +367,8 @@ func fireSkyminer(position mat.v3, direction mat.v3) {
 
 	var acceleration mat.v3 = mat.v3_mulf(direction, force / mass)
 
-	var miner i32 = phx.AddObject(objType, objTag, state, position, mat.v3_(0.0, 0.0, 0.0), acceleration,
-		right, top, back, mass, mat.v4_(axis.x, axis.y, axis.z, f32.rand() * 10.0))
+	var miner i32 = phx.AddObject(objType, objTag, state, position, acceleration, mat.v3_(0.0, 0.0, 0.0),
+		right, top, back, mass, 0.96, mat.v4_(axis.x, axis.y, axis.z, f32.rand() * 10.0), mat.v4_(1.0, 1.0, 1.0, 1.0))
 }
 
 func fireSkynotes(position mat.v3, direction mat.v3) {
@@ -216,7 +393,7 @@ func fireSkynotes(position mat.v3, direction mat.v3) {
 		var acceleration mat.v3 = mat.v3_mulf(at, force / mass)
 
 		var miner i32 = phx.AddObject(objType, objTag, state, position, mat.v3_(0.0, 0.0, 0.0), acceleration,
-			right, top, back, mass, mat.v4_(axis.x, axis.y, axis.z, f32.rand() * 10.0))
+			right, top, back, mass, 1.0, mat.v4_(axis.x, axis.y, axis.z, f32.rand() * 10.0), mat.v4_(1.0, 1.0, 1.0, 1.0))
 	}
 }
 
@@ -231,37 +408,78 @@ func gameOnUpdate(controlIndex i32, controlAction i32) {
 	}
 	// << HACK : start cx profiling
 
+
+	var scaleBox f32 = 50.0
+	for i:= aimCount; i < aimMax; i++ {
+		newAimBox(mat.v3_add(mat.v3_((2.0 * f32.rand() - 1.0) * scaleBox, scaleBox + f32.rand() * 5.0, (2.0 * f32.rand() - 1.0) * scaleBox), phx.GetObjectPosition(phxPlayer)))
+		aimCount = aimCount + 1
+	}
+
 	var playerAt mat.v3 = phx.GetObjectAt(phxPlayer)
-	var playerOffset mat.v3 = mat.v3_add(mat.v3_mulf(playerAt, 0.4), mat.v3_(0.0, 18.0, 0.0))
+	var playerOffset mat.v3 = mat.v3_add(mat.v3_mulf(playerAt, 0.4), mat.v3_(1.2 + 4.0, 16.9 + 3.7, 0.2 + 0.4))
  
 	var cameraAt mat.v3 = gam.CameraGetAt(camera)
 	var cameraPos mat.v3 = gam.CameraGetPosition(camera)
 
-	var weaponAt mat.v3
-	var weaponPos mat.v3
-	if currentCamera == CAMERA_FREE {
-		weaponAt = cameraAt
-		weaponPos = cameraPos
-	} else if currentCamera == CAMERA_TPS {
-		weaponAt = mat.v3_normalize(mat.v3_sub(mat.v3_add(playerOffset, phx.GetObjectPosition(phxPlayer)), gam.CameraGetPosition(camera)))
-		weaponPos = cameraPos
-	} else if currentCamera == CAMERA_FPS {
-		weaponAt = cameraAt
-		weaponPos = cameraPos
-	}
-
-	if fireWeapon > 0 {
-		if currentWeapon == WEAPON_SKYMINER {
-			fireSkyminer(weaponPos, weaponAt)
-			fireWeapon = 0
-		} else if currentWeapon == WEAPON_SKYNOTE {
-			fireSkynotes(weaponPos, weaponAt)
-		}
-	}
-
-
 	var dts f64 = fps.DeltaSecond()
 	var dt f32 = f64.f32(dts)
+
+	var player Player = players[currentPlayer]
+	fireAnimLength = gfx.AnimationGetMax(player.throw.anim)
+
+	var weaponAt mat.v3
+	var weaponPos mat.v3 = skyminerPos
+	if currentCamera == CAMERA_FREE {
+		weaponAt = cameraAt
+	} else if currentCamera == CAMERA_TPS {
+		var invProj[]f32 = gam.CameraGetInvViewProj(camera)
+		var aimDir mat.v4 = mat.v4_(aimPosition.x, aimPosition.y, 1.0, 1.0)
+		aimDir = mat.v4_transform(aimDir, invProj)
+		var weaponTarget mat.v3
+		weaponTarget.x = aimDir.x / aimDir.w
+		weaponTarget.y = aimDir.y / aimDir.w
+		weaponTarget.z = aimDir.z / aimDir.w
+		weaponAt = weaponTarget
+		weaponAt = mat.v3_sub(weaponTarget, mat.v3_add(phx.GetObjectPosition(phxPlayer), playerOffset))
+		weaponAt = mat.v3_normalize(weaponAt)
+
+		var cameraYaw mat.v4 = gam.CameraGetYawQuaternion(camera)
+		var playerYawAA mat.v4 = phx.GetObjectRotation(phxPlayer)
+		var playerYaw mat.v4 = mat.QuaternionFromAxisAngle(playerYawAA.x, playerYawAA.y, playerYawAA.z, playerYawAA.w)
+
+		var yawLength f32 = mat.v4_length(mat.v4_sub(cameraYaw, playerYaw))
+		if yawLength < 0.001 {
+			yawTime = -1.0
+			playerYaw = cameraYaw
+		} else {
+			if yawTime < 0.0 {
+				yawTime = 0.0
+			}
+			playerYaw = mat.QuaternionLerp(playerYaw, cameraYaw, yawTime)
+			yawTime = yawTime + dt
+			if yawTime > 1.0 {
+				yawTime = -1.0
+			}
+		}
+
+		playerYaw = mat.QuaternionToAxisAngle(playerYaw.x, playerYaw.y, playerYaw.z, playerYaw.w)
+		phx.SetObjectRotation(phxPlayer, playerYaw)
+	} else if currentCamera == CAMERA_FPS {
+		weaponAt = cameraAt
+	}
+
+	var backwardAnim gfx.AnimationId = player.backward.anim
+	currentAnim = player.idle.anim
+	if previousPlayer != currentPlayer {
+		previousAnim = currentAnim
+		switchAnimTime = -1.0
+	}
+
+
+	if fireWeapon > 0 && fireAnimTime < 0.0 {
+		fireAnimTime = 0.0
+		gfx.AnimationSetTime(player.throw.anim, 0.0)
+	}
 
 
 	var acceleration mat.v3
@@ -277,6 +495,7 @@ func gameOnUpdate(controlIndex i32, controlAction i32) {
 		if zdir != 0.0 {
 			right = phx.GetObjectRight(phxPlayer)
 		}
+
 	} else if currentCamera == CAMERA_TPS {
 		if xdir != 0.0 {
 			at = gam.CameraGetAt(camera)
@@ -286,24 +505,115 @@ func gameOnUpdate(controlIndex i32, controlAction i32) {
 		}
 	}
 
-	acceleration = mat.v3_add(acceleration, mat.v3_mulf(at, dt * 2000.0 * xdir))
-	acceleration = mat.v3_add(acceleration, mat.v3_mulf(right, dt * 2000.0 * zdir))
-	acceleration.y = 0.0
+	var nextFireAnimTime f32 = fireAnimTime + dt * 2.5
+	if nextFireAnimTime >= fireAnimThrow && fireWeapon > 0 {
+		if currentWeapon == WEAPON_SKYMINER {
+			fireSkyminer(weaponPos, weaponAt)
+			fireWeapon = 0
+		} else if currentWeapon == WEAPON_SKYNOTE {
+			fireSkynotes(weaponPos, weaponAt)
+		}
+	}
 
+	backward = false
+	previousPlayer = currentPlayer
+	if currentCamera == CAMERA_FPS || currentCamera == CAMERA_TPS {
+		if zdir > 0.0 {
+			currentAnim = player.right.anim
+		} else if zdir < 0.0 {
+			currentAnim = player.left.anim
+		}
+
+		if xdir > 0.0 {
+			currentAnim = backwardAnim
+			backward = true
+		} else if xdir < 0.0 {
+			currentAnim = player.forward.anim
+		}
+
+		var currentDt f32 = dt
+		if fireAnimTime >= 0.0 {
+			currentAnim = player.throw.anim
+			currentDt = dt * 2.5
+			fireAnimTime = fireAnimTime + currentDt
+		}
+
+		if fireAnimTime > fireAnimLength {
+			fireAnimTime = -1.0
+		}
+
+		if jumping {
+			currentAnim = player.jump.anim
+		}
+		if currentAnim.animation != previousAnim.animation && switchAnimTime < 0.0 {
+			switchAnimTime = 0.0
+		}
+
+		if switchAnimTime >= 0.0 {
+			var animMax f32 = f32.max(gfx.AnimationGetMax(currentAnim), gfx.AnimationGetMax(runtimeAnim))
+			var tmpAnim gfx.AnimationId = tmpAnim0
+			if tmpAnim.animation == currentAnim.animation || tmpAnim0.animation == runtimeAnim.animation {
+				tmpAnim = tmpAnim1
+			}
+			if tmpAnim1.animation == currentAnim.animation || tmpAnim1.animation == runtimeAnim.animation {
+				tmpAnim = tmpAnim2
+			}
+		   gfx.AnimationUpdate(currentAnim, currentDt, true, -1.0)//animMax)
+			if currentAnim.animation == backwardAnim.animation && currentPlayer == 0 {
+				var q mat.v4 = gfx.AnimationGetJointRotation(currentAnim, player.spine)
+				q = mat.QuaternionMultiply(q, backwardQuat)
+				gfx.AnimationSetJointRotation(currentAnim, player.spine, q)
+			}
+
+			gfx.AnimationUpdate(runtimeAnim, dt, true, -1.0)//animMax)
+			if runtimeAnim.animation == backwardAnim.animation && currentPlayer == 0{
+				var q mat.v4 = gfx.AnimationGetJointRotation(runtimeAnim, player.spine)
+				q = mat.QuaternionMultiply(q, backwardQuat)
+				gfx.AnimationSetJointRotation(runtimeAnim, player.spine, q)
+			}
+
+			gfx.AnimationMorph(runtimeAnim, currentAnim, tmpAnim, switchAnimTime)
+			switchAnimTime = switchAnimTime + dt * 5.0
+			//currentAnim = tmpAnim
+			runtimeAnim = tmpAnim
+		} else {
+			gfx.AnimationUpdate(currentAnim, currentDt, true, -1.0)
+			if currentAnim.animation == backwardAnim.animation && currentPlayer == 0 {
+				var q mat.v4 = gfx.AnimationGetJointRotation(currentAnim, player.spine)
+				q = mat.QuaternionMultiply(q, backwardQuat)
+				gfx.AnimationSetJointRotation(currentAnim, player.spine, q)
+			}
+			runtimeAnim = currentAnim
+		}
+
+		if switchAnimTime >= 1.0 {
+			switchAnimTime = -1.0
+			previousAnim = currentAnim
+			runtimeAnim = currentAnim
+			//currentAnim = nextAnim
+		}
+	}
+
+	acceleration = mat.v3_add(acceleration, mat.v3_mulf(at, dt * 60.0 * xdir))
+	acceleration = mat.v3_add(acceleration, mat.v3_mulf(right, dt * 60.0 * zdir))
+	acceleration.y = ydir * dt * 500.0
+	ydir = 0.0
 
 	phx.SetObjectAcceleration(phxPlayer, acceleration)
 	var playerVelocity mat.v3 = phx.GetObjectVelocity(phxPlayer)
 	var playerVelocityLength f32 = mat.v3_length(playerVelocity)
-	var maxVelocity f32 = 200.0
+	/*var maxVelocity f32 = 200.0
 	if playerVelocityLength > maxVelocity {
 		playerVelocity = mat.v3_mulf(playerVelocity, maxVelocity / playerVelocityLength)
-	}
+	}*/
 	phx.SetObjectVelocity(phxPlayer, playerVelocity)
 	phx.Update(fps.DeltaNano())
 
+	if phx.COLLIDED {
+		jumping = false
+	}
 
-
-	var playerPosition mat.v3 = mat.v3_add(playerOffset, phx.GetObjectPosition(phxPlayer))
+	var playerPosition mat.v3 = mat.v3 = mat.v3_add(playerOffset, phx.GetObjectPosition(phxPlayer))
 	if currentCamera == CAMERA_FREE {
 		gam.FreeCameraUpdate(camera, dts)
 	} else if currentCamera == CAMERA_FPS {
@@ -313,19 +623,64 @@ func gameOnUpdate(controlIndex i32, controlAction i32) {
 	}
 
 
-	var i i32
-	for i = 0; i < phx.GetObjectCount(); i++ {
+	phxRemoveList = resize(phxRemoveList, 0)
+
+	var phxCount i32 = phx.GetObjectCount()
+	for i := 0; i < phxCount; i++ {
 		var objTag i32 = phx.GetObjectTag(i)
-		if objTag == TAG_MINER || objTag == TAG_DOLLAR {
+		if objTag == TAG_MINER || objTag == TAG_DOLLAR || objTag == TAG_AIM {
 			var position mat.v3 = phx.GetObjectPosition(i)
 			if position.y < worldPosY * 2.0 {
-				phx.RemoveObject(i)
-				i = i - 1
+				if objTag == TAG_AIM {
+					phxRemoveList = append(phxRemoveList, i)
+					aimCount = aimCount - 1
+				}
+			} else if objTag == TAG_MINER {
+				for k := 0; k < phxCount; k++ {
+					if phx.GetObjectTag(k) == TAG_AIM {
+						var distance f32 = mat.v3_length(mat.v3_sub(phx.GetObjectPosition(i), phx.GetObjectPosition(k)))
+						if distance < 10.0 || len(phxRemoveList) == 1 {
+							phxRemoveList = append(phxRemoveList, k)
+							phxRemoveList = append(phxRemoveList, i)
+							aimCount = aimCount - 1
+						}
+					}
+				}
 			}
 		}
 	}
-	gfx.ModelUpdate(skyminerModel, dt, true)
-	gfx.ModelUpdate(playerModel, dt, true)
+
+	phxSortedList = resize(phxSortedList, 0)
+	var removeCount i32 = len(phxRemoveList)
+	for i := 0; i < removeCount; i++ {
+		var sortedCount i32 = len(phxSortedList)
+		var remove i32 = phxRemoveList[i]
+		var duplicate i32 = 0
+		for k := 0; k < sortedCount; k++ {
+			var sorted i32 = phxSortedList[k]
+			if remove < sorted {
+				phxSortedList = insert(phxSortedList, k, remove)
+				k = sortedCount
+			} else if remove == sorted {
+				duplicate = 1
+			} else {
+				k = sortedCount
+			}
+		}
+
+		if sortedCount == len(phxSortedList) && duplicate == 0 {
+			phxSortedList = append(phxSortedList, remove)
+		}
+	}
+
+	for i := 0; i < removeCount; i++ {
+		phx.RemoveObject(phxSortedList[removeCount - i - 1])
+	}
+
+	gfx.ModelUpdate(skyminerModel, gfx.AnimationInvalid(), dt, true)
+
+	var currentModel gfx.ModelId = players[currentPlayer].idle.model
+	gfx.ModelUpdate(currentModel, runtimeAnim, dt, true)
 }
 
 //-----------------------------------------------------------------------------
@@ -369,18 +724,21 @@ func gameOnRender(controlIndex i32, controlAction i32) {
 	phx.Render(identity, view, projection)
 
 	// player
-	gfx.ModelSetView(playerModel, view)
-	gfx.ModelSetProjection(playerModel, projection)
-	gfx.ModelSetEnvironmentSpecular(playerModel, skySpecular)
-	gfx.ModelSetEnvironmentDiffuse(playerModel, skyDiffuse)
-	gfx.ModelSetBRDF(playerModel, brdf)
-	gfx.ModelSetCameraPosition(playerModel, cameraPosition)
+	var player Player = players[currentPlayer]
+	var currentModel gfx.ModelId = player.idle.model
+	gfx.ModelSetView(currentModel, view)
+	gfx.ModelSetProjection(currentModel, projection)
+	gfx.ModelSetEnvironmentSpecular(currentModel, skySpecular)
+	gfx.ModelSetEnvironmentDiffuse(currentModel, skyDiffuse)
+	gfx.ModelSetBRDF(currentModel, brdf)
+	gfx.ModelSetCameraPosition(currentModel, cameraPosition)
 	pos = phx.GetObjectPosition(phxPlayer)
 	rot = phx.GetObjectRotation(phxPlayer)
 	quat = mat.QuaternionFromAxisAngle(rot.x, rot.y, rot.z, rot.w)
-	world = mat.MatrixCreate2(world, playerScale, playerScale, playerScale, quat.x, quat.y, quat.z, quat.w, pos.x, pos.y, pos.z)
-	gfx.ModelSetWorld(playerModel, world)
-	gfx.ModelRender(playerModel)
+	quat = mat.QuaternionMultiply(quat, mat.QuaternionFromAxisAngle(0.0, 1.0, 0.0, mat.PI))
+	playerWorld = mat.MatrixCreate2(playerWorld, playerScale, playerScale, playerScale, quat.x, quat.y, quat.z, quat.w, pos.x, pos.y, pos.z)
+	gfx.ModelSetWorld(currentModel, playerWorld)
+	gfx.ModelRender(currentModel)
 
 	// skyminers
 	gfx.ModelSetView(skyminerModel, view)
@@ -389,16 +747,43 @@ func gameOnRender(controlIndex i32, controlAction i32) {
 	gfx.ModelSetEnvironmentDiffuse(skyminerModel, skyDiffuse)
 	gfx.ModelSetBRDF(skyminerModel, brdf)
 	gfx.ModelSetCameraPosition(skyminerModel, cameraPosition)
+
+	var tmpRot mat.v4 = mat.QuaternionFromAxisAngle(1.0, 0.0, 0.0,  -0.94)
+	var tmpScaleMatrix []f32 = mat.MatrixCreate2(tmpMatrix2, skyminerScale, skyminerScale, skyminerScale, tmpRot.x, tmpRot.y, tmpRot.z, tmpRot.w, -1.4, 22.6, 3.6)
+	tmpMatrix = gfx.ModelGetNodeTransform(currentModel, player.hand, tmpMatrix)
+	tmpMatrix = mat.MatrixMultiply(tmpMatrix, tmpMatrix, playerWorld)
+	tmpMatrix = mat.MatrixMultiply(tmpMatrix, tmpScaleMatrix, tmpMatrix)
+	gfx.ModelSetWorld(skyminerModel, tmpMatrix)
+	skyminerPos.x = tmpMatrix[12]
+	skyminerPos.y = tmpMatrix[13]
+	skyminerPos.z = tmpMatrix[14]
+
+	if fireAnimTime >= 0.0 {
+		gfx.EnableBlending(gfx.SRC_ALPHA, gfx.ONE_MINUS_SRC_ALPHA)
+		gfx.DepthState(true, gfx.LESS, true)
+		var fireAnimAlpha f32 = 1.0
+		if fireAnimTime >= fireAnimThrow && fireAnimTime <= fireAnimThresh {
+			fireAnimAlpha = 0.0
+		} else if fireAnimTime >= fireAnimThresh {
+			fireAnimAlpha = (fireAnimTime - fireAnimThresh) / (fireAnimLength - fireAnimThresh)
+		}
+		gfx.modelRender(skyminerModel, gfx.ModelGetMeshes(skyminerModel), fireAnimAlpha)
+	} else {
+		gfx.ModelRender(skyminerModel)
+	}
+
 	for i := 0; i < phx.GetObjectCount(); i++ {
 		if phx.GetObjectTag(i) == TAG_MINER {
 			pos = phx.GetObjectPosition(i)
 			rot = phx.GetObjectRotation(i)
 			quat = mat.QuaternionFromAxisAngle(rot.x, rot.y, rot.z, rot.w)
-			world = mat.MatrixCreate2(world, skyminerScale, skyminerScale, skyminerScale, quat.x, quat.y, quat.z, quat.w, pos.x, pos.y, pos.z)
+			var minerScale f32 = skyminerScale * 0.1
+			world = mat.MatrixCreate2(world, minerScale, minerScale, minerScale, quat.x, quat.y, quat.z, quat.w, pos.x, pos.y, pos.z)
 			gfx.ModelSetWorld(skyminerModel, world)
 			gfx.ModelRender(skyminerModel)
 		}
 	}
+
 
 	// skynotes
 	var size mat.v3 = mat.v3_mulf(mat.v3_(1.0, 1.0, 0.5), 0.75)
@@ -526,8 +911,32 @@ func onExitDialogYes(controlIndex i32, controlAction i32) {
 
 //-----------------------------------------------------------------------------
 //-----------------------------------------------------------------------------
-func loadModel(path str, filename str, s f32, r f32, v f32) (out gfx.ModelId) {
-	out = gfx.ModelCreateFromFile(sprintf("%s/models/%s/", app.DataDir(), path), filename)
+func loadModel(path str, filename str, s f32, r f32, v f32, options i32) (out gfx.ModelId) {
+	printf("loading '%s/%s'\n", path, filename)
+	out = gfx.ModelCreateFromFile(sprintf("%s/models/%s/", app.DataDir(), path), filename, options)
+}
+
+//-----------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
+func animCreate(name str, options i32) (out Anim) {
+	out.model = loadModel(name, "scene.gltf", playerScale, playerScale, playerScale, options)
+	out.anim = gfx.ModelGetAnimation(out.model, 0)
+}
+
+func playerCreate(pattern str, spine str, torso str, shoulder str, hand str) (out Player) {
+	out.idle = animCreate(sprintf("%s_idle", pattern), gfx.MODEL_GEOMETRY)
+	out.jump = animCreate(sprintf("%s_jump", pattern), gfx.MODEL_ANIMATION)
+	out.throw = animCreate(sprintf("%s_throw", pattern), gfx.MODEL_ANIMATION)
+	out.forward = animCreate(sprintf("%s_forward", pattern), gfx.MODEL_ANIMATION)
+	out.backward = animCreate(sprintf("%s_backward", pattern), gfx.MODEL_ANIMATION)
+	out.left = animCreate(sprintf("%s_left", pattern), gfx.MODEL_ANIMATION)
+	out.right = animCreate(sprintf("%s_right", pattern), gfx.MODEL_ANIMATION)
+
+	var model gfx.ModelId = out.idle.model
+	out.spine = gfx.ModelGetNodeByName(model, spine)
+	out.torso = gfx.ModelGetNodeByName(model, torso)
+	out.shoulder = gfx.ModelGetNodeByName(model, shoulder)
+	out.hand = gfx.ModelGetNodeByName(model, hand)
 }
 
 //-----------------------------------------------------------------------------
@@ -535,7 +944,7 @@ func loadModel(path str, filename str, s f32, r f32, v f32) (out gfx.ModelId) {
 func main()() {
 	// init
 	gam.Init("skylight", 1024, 768, 60, "")
-	phx.Init(30U, -9.8)
+	phx.Init(30U, -9.8 * 0.1)
 
 	skyMesh = gfx.MeshLock(gfx.TRIANGLES, gfx.UNSIGNED_SHORT, 36, gfx.g_vertexLayout, 24);
 	gfx.MeshBegin(skyMesh)
@@ -545,16 +954,24 @@ func main()() {
 		mat.v4_(1.0, 1.0, 1.0, 1.0))
 	gfx.MeshEnd(skyMesh)
 
-	skyminerModel = loadModel("Skyminer_7_1/", "skyminer_low_test.gltf", 0.01, 0.01, 0.0)
-	//playerModel = loadModel("synth_2_0", "scene.gltf", 1.0, 1.0, 1.0)  
-	var playerScale f32 = 0.0000001
-	playerModel = loadModel("synth_test_idle", "scene.gltf", playerScale, playerScale, playerScale)
-	//playerModel = loadModel("synth_test_run", "scene.gltf", playerScale, playerScale, playerScale)
+	skyminerModel = loadModel("Skyminer_7_1/", "skyminer_low_test.gltf", 0.01, 0.01, 0.0, gfx.MODEL_GEOMETRY)
+	//var playerScale f32 = 0.0000001
+
+	players = append(players, playerCreate("synth", "mixamorig:Hips_00", "mixamorig:Spine_01", "mixamorig:RightShoulder_011", "mixamorig:RightHand_014"))
+	players = append(players, playerCreate("vitalik", "mixamorig:Hips_00", "mixamorig:Spine_01", "mixamorig:RightShoulder_011", "mixamorig:RightHand_014"))
+	currentPlayer = 0
+	currentAnim = players[0].idle.anim
+	runtimeAnim = currentAnim
+	previousAnim = currentAnim
+
+	tmpAnim0 = gfx.AnimationCreate()
+	tmpAnim1 = gfx.AnimationCreate()
+	tmpAnim2 = gfx.AnimationCreate()
 
 	phxPlayer = phx.AddObject(phx.TYPE_ELLIPSE, TAG_PLAYER, phx.STATE_TRANSLATE | phx.STATE_DEBUG | phx.STATE_DEBUG_COLOR,
 			mat.v3_(4.0 + f32.rand() * 20.0, 4.0 + f32.rand() * 2.0, -25.0 + f32.rand() * 20.0), mat.v3_(0.0, 0.0, 0.0), mat.v3_(0.0, 0.0, 0.0),
 			mat.v3_(1.0, 0.0, 0.0), mat.v3_(0.0, 1.0, 0.0), mat.v3_(0.0, 0.0, 1.0),
-			75.0 + f32.rand() * 50.0, mat.v4_(0.0, 0.0, 1.0, 0.0))
+			75.0 + f32.rand() * 50.0, 1.0, mat.v4_(0.0, 0.0, 1.0, 0.0), mat.v4_(1.0, 1.0, 1.0, 1.0))
 
 	dollarMesh = gfx.MeshCreate(gfx.TRIANGLES, gfx.UNSIGNED_SHORT, 8192 * 3, gfx.g_vertexLayout, 8192 * 3)
 	groundMesh = gfx.MeshLock(gfx.TRIANGLES, gfx.UNSIGNED_SHORT, 6 * groundWidth * groundHeight, gfx.g_vertexLayout, 6 * groundWidth * groundHeight)
@@ -571,12 +988,12 @@ func main()() {
 	phxGround0 = phx.AddObject(phx.TYPE_PLANE, TAG_GROUND, phx.STATE_ACTIVE | phx.STATE_DEBUG | phx.STATE_DEBUG_COLOR | phx.STATE_DEBUG_WIRE,
 		mat.v3_(0.0, worldPosY, 0.0), mat.v3_(0.0, 0.0, 0.0), mat.v3_(0.0, 0.0, 0.0),
 		mat.v3_(groundRight, 0.0, 0.0), mat.v3_(0.0, 1.0, 0.0), mat.v3_(0.0, 0.0, groundBack),
-		0.0, mat.v4_(0.0, 1.0, 0.0, 0.0))
+		0.0, 1.0, mat.v4_(0.0, 1.0, 0.0, 0.0), mat.v4_(1.0, 1.0, 1.0, 1.0))
 	phx.SetObjectRotation(phxGround0, mat.v4_(0.0, 0.0, 1.0, 0.2))
 	phxGround1 = phx.AddObject(phx.TYPE_PLANE, TAG_GROUND, phx.STATE_ACTIVE | phx.STATE_DEBUG | phx.STATE_DEBUG_COLOR | phx.STATE_DEBUG_WIRE,
 		mat.v3_(-100.0, 2.0 * worldPosY, 0.0), mat.v3_(0.0, 0.0, 0.0), mat.v3_(0.0, 0.0, 0.0),
 		mat.v3_(groundRight, 0.0, 0.0), mat.v3_(0.0, 1.0, 0.0), mat.v3_(0.0, 0.0, groundBack),
-		0.0, mat.v4_(0.0, 1.0, 0.0, 0.0))
+		0.0, 1.0, mat.v4_(0.0, 1.0, 0.0, 0.0), mat.v4_(1.0, 1.0, 1.0, 1.0))
 
 	dollar = gfx.TextureCreate(sprintf("%s/textures/skynote.png", app.DataDir()),
 		gfx.FORMAT_R8_G8_B8_A8, 0, 0, -1, false)

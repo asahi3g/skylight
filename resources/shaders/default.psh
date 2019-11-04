@@ -270,8 +270,8 @@ void main()
 	float metal = u_v4MetalRough.z;
 #elif defined(USE_PBR_MAP)
 	vec4 v4MetalRough = texture2D(u_t2MetalRough, v_v2Texcoord);
-	float rough = v4MetalRough.y;
-	float metal = v4MetalRough.z;
+	float rough = v4MetalRough.y * u_v4MetalRough.y;
+	float metal = v4MetalRough.z * u_v4MetalRough.z;
 #else
 	//float rough = 1.0;
 	//float metal = 1.0;
