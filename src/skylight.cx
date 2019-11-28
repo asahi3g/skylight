@@ -1187,7 +1187,7 @@ func writeEdges()() {
 //-----------------------------------------------------------------------------
 func skycoinOnUpdate(controlIndex i32, controlAction i32) {
 	if snd.VoiceState(voiceId) == snd.VOICE_STOPPED {
-		//snd.VoicePlay(voiceId)
+		snd.VoicePlay(voiceId)
 	}
 }
 
