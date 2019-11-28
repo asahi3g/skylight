@@ -25,6 +25,10 @@
 #define USE_TEXCOORD
 #endif
 
+#ifdef USE_PARTICLE
+#define USE_OIT
+#endif
+
 #ifdef USE_NORMAL
 #ifndef USE_TANGENT_VTX
 #ifndef USE_TEXCOORD
@@ -66,6 +70,11 @@ uniform sampler2D u_t2Emissive;
 uniform sampler2D u_t2Occlusion;
 #endif
 
+#ifdef USE_OIT
+uniform sampler2D u_t2Depth;
+uniform vec4 u_v4TargetSize;
+#endif
+
 // Uniforms ...
 uniform vec4 DEBUG_0;
 uniform vec4 u_v4Color;
@@ -73,6 +82,10 @@ uniform mat4 u_m44World;
 uniform vec4 u_v4CameraPosition;
 uniform vec4 u_v4MetalRough;
 uniform vec4 u_v4Emissive;
+
+#ifdef USE_PARTICLE
+uniform vec4 u_v4Particle;
+#endif
 
 // Varyings ...
 in vec3 v_v3Position;
@@ -101,9 +114,21 @@ in vec4 v_v4Weight;
 #endif
 #endif
 
+#ifdef USE_PARTICLE
+/*in vec3 v_v3Velocity;
+in vec3 v_v4Orientation;
+in vec3 v_v4AngularVelocity;
+in vec3 v_v3Scale;
+in vec3 v_v3ScaleVelocity;*/
+in vec4 v_v4Particle;
+#endif
+
 // Outputs ...
 out vec4 o_v4Color;
-
+#ifdef USE_OIT
+out vec4 o_v4Color1;
+#endif
+#
 struct pbr_s
 {
 	float NdotL;
@@ -265,6 +290,12 @@ void main()
 
 	v4Base = vec4(gamma(v4Base.rgb), v4Base.a);
 
+#ifdef USE_PARTICLE
+    float fade = clamp((u_v4Particle.x + v_v4Particle.x) / v_v4Particle.z, 0.0, 1.0) *
+                 clamp((v_v4Particle.y - v_v4Particle.x - u_v4Particle.x) / v_v4Particle.w, 0.0, 1.0);
+    v4Base.a *= fade;
+#endif
+
 #ifdef USE_PBR_UNI
 	float rough = u_v4MetalRough.y;
 	float metal = u_v4MetalRough.z;
@@ -348,6 +379,34 @@ void main()
 	color += v_v4Weight.rgb;
 #endif
 #endif
+
+#ifdef USE_OIT
+    vec2 uv = gl_FragCoord.xy / (u_v4TargetSize.xy);
+    float depth = texture2D(u_t2Depth, uv).r;
+    float fragDepth = gl_FragCoord.z;
+    float d = fragDepth <  depth ? 1.0 : 0.0;
+    float dd = clamp(pow(max(0.0, depth - fragDepth) * 30.0, 1.0), 0, 1);
+
+    float a = min(1.0, v4Base.a) * 8.0 + 0.01;
+    float b = -gl_FragCoord.z * 0.95 + 1.0;
+
+    // If your scene has a lot of content very close to the far plane, then include this line (one rsqrt instruction):
+    // b /= sqrt(1e4 * abs(csZ));
+    float w  = clamp(a * a * a * 1e8 * b * b * b, 1e-2, 3e2) * dd;
+
+    /*float weight =
+        max(min(1.0, max(max(color.r, color.g), color.b) * v4Base.a)), v4Base.a) *
+        clamp(0.03 / (1e-5 + pow(z / 200, 4.0)), 1e-2, 3e3);*/
+
+    vec4 tmp = vec4(
+        w * color.r * v4Base.a,
+        w * color.g * v4Base.a,
+        w * color.b * v4Base.a,
+        w * v4Base.a);
+    o_v4Color = vec4(tmp.rgb, tmp.a);
+    o_v4Color1 = vec4(tmp.a, 0.0, 0.0, 0.0);
+ #else
 	o_v4Color = vec4(invgamma(color), v4Base.a);
+#endif
 }
 

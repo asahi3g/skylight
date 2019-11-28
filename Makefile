@@ -7,10 +7,14 @@ skylight:
 	cx --debug-profile\
 		$(CX)/lib/args.cx\
 		$(CX)/lib/json.cx\
+		$(CXFX)/src/mat/v1d.cx\
+		$(CXFX)/src/mat/v1f.cx\
+		$(CXFX)/src/mat/v2f.cx\
+		$(CXFX)/src/mat/v3f.cx\
+		$(CXFX)/src/mat/v4f.cx\
+		$(CXFX)/src/mat/q4f.cx\
+		$(CXFX)/src/mat/m44f.cx\
 		$(CXFX)/src/mat/math.cx\
-		$(CXFX)/src/mat/vector.cx\
-		$(CXFX)/src/mat/quaternion.cx\
-		$(CXFX)/src/mat/matrix.cx\
 		$(CXFX)/src/app/application.cx\
 		$(CXFX)/src/app/event.cx\
 		$(CXFX)/src/fps/profiler.cx\
@@ -28,6 +32,7 @@ skylight:
 		$(CXFX)/src/gfx/text.cx\
 		$(CXFX)/src/gfx/target.cx\
 		$(CXFX)/src/gfx/scissor.cx\
+		$(CXFX)/src/gfx/particle.cx\
 		$(CXFX)/src/gui/callback.cx\
 		$(CXFX)/src/gui/layer.cx\
 		$(CXFX)/src/gui/skin.cx\
